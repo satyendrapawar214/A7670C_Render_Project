@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>A7670C Live Dashboard</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial; text-align: center; margin-top: 20px; }
+    canvas { max-width: 90%; margin: 30px auto; }
+    h1 { margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+
+<h1>A7670C Live GPS & Sensor Dashboard</h1>
+
+<canvas id="latChart"></canvas>
+<canvas id="lonChart"></canvas>
+<canvas id="speedChart"></canvas>
+<canvas id="tempChart"></canvas>
+<canvas id="voltageChart"></canvas>
+
+<script>
+const client = mqtt.connect("wss://broker.emqx.io:8084/mqtt");
+
+client.on("connect", () => {
+    console.log("Connected to MQTT broker");
+    client.subscribe("a7670c/data"); 
+    client.subscribe("a7670c/gps");  
+});
+
+function createChart(label, color) {
+    const ctx = document.getElementById(label.replace(/\s/g,'')+'Chart').getContext('2d');
+    return new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false }] },
+        options: { responsive: true, animation: false, scales: { x: { title: { display: true, text: 'Time' } }, y: { title: { display: true, text: label } } } }
+    });
+}
+
+const latChart = createChart('Latitude', 'blue');
+const lonChart = createChart('Longitude', 'green');
+const speedChart = createChart('Speed', 'red');
+const tempChart = createChart('Temperature', 'orange');
+const voltageChart = createChart('Voltage', 'purple');
+
+function updateChart(chart, value) {
+    const time = new Date().toLocaleTimeString();
+    chart.data.labels.push(time);
+    chart.data.datasets[0].data.push(value);
+    if(chart.data.labels.length > 20) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
+    chart.update();
+}
+
+client.on("message", (topic, message) => {
+    try {
+        const data = JSON.parse(message.toString());
+        if(topic === "a7670c/gps") { if(data.lat) updateChart(latChart, data.lat); if(data.lon) updateChart(lonChart, data.lon); if(data.speed) updateChart(speedChart, data.speed); }
+        if(topic === "a7670c/data") { if(data.temp) updateChart(tempChart, data.temp); if(data.voltage) updateChart(voltageChart, data.voltage); }
+    } catch(e) { console.error("Invalid data", e); }
+});
+</script>
+</body>
+</html>
