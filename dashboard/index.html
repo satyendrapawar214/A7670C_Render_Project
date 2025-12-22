@@ -2,27 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>A7670C Live Dashboard</title>
+  <title>A7670C ThingSpeak Dashboard</title>
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; }
+    body { font-family: 'Segoe UI', sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; }
     .container { max-width: 1200px; margin: auto; }
-    .header { background: #1f1f1f; padding: 20px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #1a73e8; }
+    .header { background: #1f1f1f; padding: 20px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #34a853; }
     #status { font-weight: bold; color: #ff9800; }
     .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 15px; }
     .chart-card { background: #1f1f1f; padding: 15px; border-radius: 10px; border: 1px solid #333; }
     #debug-log { background: #000; color: #00ff00; padding: 15px; height: 180px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; border-radius: 5px; margin-top: 20px; border: 1px solid #444; }
     .log-entry { border-bottom: 1px solid #222; padding: 3px 0; }
-    .err { color: #ff5252; }
   </style>
 </head>
 <body>
 
 <div class="container">
     <div class="header">
-        <h1>A7670C IoT Telemetry</h1>
-        <p>Status: <span id="status">Connecting...</span></p>
+        <h1>A7670C ThingSpeak Monitor</h1>
+        <p>Status: <span id="status">Connecting to ThingSpeak...</span></p>
     </div>
 
     <div class="chart-grid">
@@ -32,33 +31,35 @@
         <div class="chart-card"><canvas id="batteryChart"></canvas></div>
     </div>
 
-    <h3>System Output Log</h3>
+    <h3>ThingSpeak MQTT Log</h3>
     <div id="debug-log"></div>
 </div>
 
 <script>
-// --- CONFIGURATION ---
-const brokerUrl = "wss://y17601f1.ala.dedicated.aws.emqxcloud.com:8084";
+// --- THINGSPEAK CONFIGURATION ---
+const CHANNEL_ID = "YOUR_CHANNEL_ID"; // Replace with your Channel ID
+const MQTT_API_KEY = "YOUR_MQTT_API_KEY"; // Replace with your MQTT API Key
+
+// ThingSpeak uses WebSockets on Port 443 (standard HTTPS port)
+const brokerUrl = "wss://mqtt3.thingspeak.com:443/mqtt"; 
+
 const options = {
-    username: "satyendrapawar", 
-    password: "Satyendra@123",
-    clientId: 'web_' + Math.random().toString(16).substring(2, 10),
-    connectTimeout: 15000,
-    keepalive: 60,
+    username: "ANY_STRING", // Usually doesn't matter for ThingSpeak MQTT
+    password: MQTT_API_KEY,
+    clientId: "YOUR_CLIENT_ID", // MUST match the Client ID generated in ThingSpeak
     clean: true
 };
 
 const statusDiv = document.getElementById("status");
 const debugLog = document.getElementById("debug-log");
 
-function log(msg, isError = false) {
+function log(msg) {
     const entry = document.createElement("div");
-    entry.className = isError ? "log-entry err" : "log-entry";
+    entry.className = "log-entry";
     entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
     debugLog.prepend(entry);
 }
 
-log("Connecting to: " + brokerUrl);
 const client = mqtt.connect(brokerUrl, options);
 
 // --- CHART INITIALIZATION ---
@@ -67,14 +68,7 @@ function initChart(id, label, unit, color) {
     return new Chart(ctx, {
         type: 'line',
         data: { labels: [], datasets: [{ label: `${label} (${unit})`, data: [], borderColor: color, tension: 0.3, fill: false }] },
-        options: {
-            responsive: true,
-            scales: { 
-                y: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
-                x: { display: false } 
-            },
-            plugins: { legend: { labels: { color: '#fff' } } }
-        }
+        options: { responsive: true, scales: { y: { grid: { color: '#333' } }, x: { display: false } } }
     });
 }
 
@@ -82,40 +76,31 @@ const charts = {
     lat: initChart('latChart', 'Latitude', 'deg', '#4285f4'),
     lon: initChart('lonChart', 'Longitude', 'deg', '#34a853'),
     speed: initChart('speedChart', 'Speed', 'km/h', '#ea4335'),
-    bat: initChart('batteryChart', 'Battery', 'V', '#00e676') // Green color for battery
+    bat: initChart('batteryChart', 'Battery', 'V', '#00e676')
 };
 
 client.on("connect", () => {
-    log("CONNECTED to EMQX Cloud");
-    statusDiv.innerText = "Online - Waiting for Data";
+    log("CONNECTED to ThingSpeak!");
+    statusDiv.innerText = "Online";
     statusDiv.style.color = "#4caf50";
-    client.subscribe(["a7670c/data", "a7670c/gps"]);
-});
-
-client.on("error", (err) => {
-    log("MQTT Error: " + err.message, true);
-    statusDiv.innerText = "Connection Failed";
+    // ThingSpeak subscribe topic format
+    client.subscribe(`channels/${CHANNEL_ID}/subscribe`);
 });
 
 client.on("message", (topic, message) => {
     const raw = message.toString();
-    log(`Topic: ${topic} | Msg: ${raw}`);
+    log(`Data Received: ${raw}`);
     
+    // ThingSpeak usually sends data as: field1=18.5&field2=73.2...
+    // But if you send JSON, we parse it here:
     try {
-        const data = JSON.parse(raw);
-        
-        if(topic === "a7670c/gps") {
-            if(data.lat) updateChart(charts.lat, data.lat);
-            if(data.lon) updateChart(charts.lon, data.lon);
-            if(data.speed !== undefined) updateChart(charts.speed, data.speed);
-        } 
-        else if(topic === "a7670c/data") {
-            // Check for common battery keys: vbat, battery, or volt
-            const batteryVal = data.vbat || data.battery || data.volt || data.voltage;
-            if(batteryVal !== undefined) updateChart(charts.bat, batteryVal);
-        }
+        const urlParams = new URLSearchParams(raw);
+        if (urlParams.has('field1')) updateChart(charts.lat, urlParams.get('field1'));
+        if (urlParams.has('field2')) updateChart(charts.lon, urlParams.get('field2'));
+        if (urlParams.has('field3')) updateChart(charts.speed, urlParams.get('field3'));
+        if (urlParams.has('field4')) updateChart(charts.bat, urlParams.get('field4'));
     } catch(e) {
-        log("JSON Parse Error. Ensure hardware sends valid JSON.", true);
+        log("Parse Error: Ensure data is sent as field1=val&field2=val");
     }
 });
 
@@ -127,7 +112,7 @@ function updateChart(chart, val) {
         chart.data.labels.shift();
         chart.data.datasets[0].data.shift();
     }
-    chart.update('none'); 
+    chart.update('none');
 }
 </script>
 </body>
