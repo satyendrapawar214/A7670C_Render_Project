@@ -1,15 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A7670C ThingSpeak HTTP Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #0f1214; color: #e0e0e0; margin: 0; padding: 20px; }
+    .container { max-width: 1200px; margin: auto; }
+    
+    .header { 
+        background: #1c1f24; padding: 25px; border-radius: 12px; 
+        margin-bottom: 25px; border-left: 6px solid #34a853;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    }
+    
+    h1 { margin: 0; color: #ffffff; font-size: 24px; }
+    #status { font-weight: bold; color: #ff9800; transition: color 0.3s; }
+
+    .chart-grid { 
+        display: grid; 
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); 
+        gap: 20px; 
+    }
+    
+    .chart-card { 
+        background: #1c1f24; padding: 20px; border-radius: 12px; 
+        border: 1px solid #2d3238; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+
+    #debug-log { 
+        background: #000000; color: #00ff41; padding: 15px; 
+        height: 180px; overflow-y: auto; font-family: 'Consolas', monospace; 
+        font-size: 13px; border-radius: 8px; margin-top: 25px; 
+        border: 1px solid #333; line-height: 1.5;
+    }
+
+    .log-entry { border-bottom: 1px solid #222; padding: 4px 0; }
+    .log-time { color: #888; margin-right: 10px; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>A7670C Real-Time Telemetry (HTTP)</h1>
+        <p>System Status: <span id="status">Initializing...</span></p>
+    </div>
+
+    <div class="chart-grid">
+        <div class="chart-card"><canvas id="latChart"></canvas></div>
+        <div class="chart-card"><canvas id="lonChart"></canvas></div>
+        <div class="chart-card"><canvas id="speedChart"></canvas></div>
+        <div class="chart-card"><canvas id="batteryChart"></canvas></div>
+    </div>
+
+    <h3>Live System Log</h3>
+    <div id="debug-log"></div>
+</div>
+
 <script>
-// --- THINGSPEAK HTTP CONFIGURATION ---
+/** * --- CONFIGURATION ---
+ * Get your READ_API_KEY from the "API Keys" tab in ThingSpeak
+ */
 const CHANNEL_ID = "3197097"; 
-const READ_API_KEY = "YOUR_READ_API_KEY"; // Get this from ThingSpeak 'API Keys' tab
+const READ_API_KEY = "1NP2XZ53GF98L0LI"; // Verify this is your READ Key
 
 const statusDiv = document.getElementById("status");
 const debugLog = document.getElementById("debug-log");
 
+// Helper to log messages to the UI
 function log(msg) {
     const entry = document.createElement("div");
     entry.className = "log-entry";
-    entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    const time = new Date().toLocaleTimeString();
+    entry.innerHTML = `<span class="log-time">[${time}]</span> ${msg}`;
     debugLog.prepend(entry);
 }
 
@@ -18,8 +83,26 @@ function initChart(id, label, unit, color) {
     const ctx = document.getElementById(id).getContext('2d');
     return new Chart(ctx, {
         type: 'line',
-        data: { labels: [], datasets: [{ label: `${label} (${unit})`, data: [], borderColor: color, tension: 0.3, fill: false }] },
-        options: { responsive: true, scales: { y: { grid: { color: '#333' } }, x: { display: false } } }
+        data: { 
+            labels: [], 
+            datasets: [{ 
+                label: `${label} (${unit})`, 
+                data: [], 
+                borderColor: color, 
+                backgroundColor: color + '22',
+                tension: 0.4, 
+                fill: true,
+                pointRadius: 2
+            }] 
+        },
+        options: {
+            responsive: true,
+            scales: { 
+                y: { grid: { color: '#2d3238' }, ticks: { color: '#aaa' } },
+                x: { display: false } 
+            },
+            plugins: { legend: { labels: { color: '#fff' } } }
+        }
     });
 }
 
@@ -30,52 +113,60 @@ const charts = {
     bat: initChart('batteryChart', 'Battery', 'V', '#00e676')
 };
 
-// --- HTTP FETCH LOGIC ---
+// --- DATA FETCHING (HTTP GET) ---
 async function fetchData() {
-    // API URL to get the last 1 entry from your channel
     const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?api_key=${READ_API_KEY}&results=1`;
 
     try {
         const response = await fetch(url);
+        if (!response.ok) throw new Error("Network response was not ok");
+        
         const data = await response.json();
         
         if (data.feeds && data.feeds.length > 0) {
             const lastEntry = data.feeds[0];
-            statusDiv.innerText = "Online: Syncing Data";
+            
+            statusDiv.innerText = "Connected: Data Received";
             statusDiv.style.color = "#4caf50";
 
-            log(`Data Received: F1:${lastEntry.field1}, F2:${lastEntry.field2}`);
+            log(`Sync Success - Lat: ${lastEntry.field1 || 'N/A'}, Bat: ${lastEntry.field4 || 'N/A'}`);
 
-            // Update charts if data exists in fields
-            if (lastEntry.field1 !== null) updateChart(charts.lat, lastEntry.field1);
-            if (lastEntry.field2 !== null) updateChart(charts.lon, lastEntry.field2);
-            if (lastEntry.field3 !== null) updateChart(charts.speed, lastEntry.field3);
-            if (lastEntry.field4 !== null) updateChart(charts.bat, lastEntry.field4);
+            // Mapping: field1=Lat, field2=Lon, field3=Speed, field4=Battery
+            if (lastEntry.field1) updateChart(charts.lat, lastEntry.field1);
+            if (lastEntry.field2) updateChart(charts.lon, lastEntry.field2);
+            if (lastEntry.field3) updateChart(charts.speed, lastEntry.field3);
+            if (lastEntry.field4) updateChart(charts.bat, lastEntry.field4);
         }
     } catch (error) {
-        log("HTTP Fetch Error: Check your Read API Key or Network.");
-        statusDiv.innerText = "Fetch Error";
+        log(`Error: ${error.message}`);
+        statusDiv.innerText = "Connection Error";
         statusDiv.style.color = "#ff5252";
     }
 }
 
 function updateChart(chart, val) {
     const time = new Date().toLocaleTimeString();
-    // Don't add duplicate data if it hasn't changed (optional)
-    if (chart.data.datasets[0].data.slice(-1)[0] === val) return; 
+    
+    // Only update if the value is different from the last point to keep charts clean
+    const lastVal = chart.data.datasets[0].data.slice(-1)[0];
+    if (lastVal === val) return;
 
     chart.data.labels.push(time);
     chart.data.datasets[0].data.push(val);
-    if(chart.data.labels.length > 15) {
+    
+    // Maintain scrolling window of 20 points
+    if(chart.data.labels.length > 20) {
         chart.data.labels.shift();
         chart.data.datasets[0].data.shift();
     }
-    chart.update();
+    chart.update('none'); // Update without heavy animation
 }
 
-// Start polling every 15 seconds (ThingSpeak free tier limit)
-log("Starting HTTP Polling...");
+// Start polling immediately, then every 15 seconds
+log("Dashboard Started. Polling ThingSpeak HTTP API...");
 fetchData(); 
 setInterval(fetchData, 15000); 
 
 </script>
+</body>
+</html>
