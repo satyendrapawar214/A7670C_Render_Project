@@ -36,8 +36,9 @@ client.on("error", (error) => {
     console.error("Connection error:", error);
 });
 
-function createChart(label, color) {
-    const ctx = document.getElementById(label.replace(/\s/g,'')+'Chart').getContext('2d');
+function createChart(label, color, id) {
+    const ctx = document.getElementById(id).getContext('2d');
+    console.log(`Creating chart for ${label} with ID ${id}`);
     return new Chart(ctx, {
         type: 'line',
         data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false }] },
@@ -45,11 +46,11 @@ function createChart(label, color) {
     });
 }
 
-const latChart = createChart('Latitude', 'blue');
-const lonChart = createChart('Longitude', 'green');
-const speedChart = createChart('Speed', 'red');
-const tempChart = createChart('Temperature', 'orange');
-const voltageChart = createChart('Voltage', 'purple');
+const latChart = createChart('Latitude', 'blue', 'latChart');
+const lonChart = createChart('Longitude', 'green', 'lonChart');
+const speedChart = createChart('Speed', 'red', 'speedChart');
+const tempChart = createChart('Temperature', 'orange', 'tempChart');
+const voltageChart = createChart('Voltage', 'purple', 'voltageChart');
 
 function updateChart(chart, value) {
     const time = new Date().toLocaleTimeString();
@@ -57,6 +58,7 @@ function updateChart(chart, value) {
     chart.data.datasets[0].data.push(value);
     if(chart.data.labels.length > 20) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
     chart.update();
+    console.log(`Updated chart with value: ${value} at ${time}`);
 }
 
 client.on("message", (topic, message) => {
