@@ -21,12 +21,19 @@
 <canvas id="voltageChart"></canvas>
 
 <script>
-const client = mqtt.connect("y17601f1.ala.dedicated.aws.emqxcloud.com:8084");
+const client = mqtt.connect("wss://y17601f1.ala.dedicated.aws.emqxcloud.com:8084", {
+    username: "your_username",  // Add your EMQX Cloud username
+    password: "your_password"   // Add your EMQX Cloud password
+});
 
 client.on("connect", () => {
     console.log("Connected to MQTT broker");
-    client.subscribe("a7670c/data"); 
-    client.subscribe("a7670c/gps");  
+    client.subscribe("a7670c/data", { qos: 1 });
+    client.subscribe("a7670c/gps", { qos: 1 });
+});
+
+client.on("error", (error) => {
+    console.error("Connection error:", error);
 });
 
 function createChart(label, color) {
@@ -53,11 +60,22 @@ function updateChart(chart, value) {
 }
 
 client.on("message", (topic, message) => {
+    console.log("Received message on topic:", topic, "Raw message:", message.toString());
     try {
         const data = JSON.parse(message.toString());
-        if(topic === "a7670c/gps") { if(data.lat) updateChart(latChart, data.lat); if(data.lon) updateChart(lonChart, data.lon); if(data.speed) updateChart(speedChart, data.speed); }
-        if(topic === "a7670c/data") { if(data.temp) updateChart(tempChart, data.temp); if(data.voltage) updateChart(voltageChart, data.voltage); }
-    } catch(e) { console.error("Invalid data", e); }
+        console.log("Parsed data:", data);
+        if(topic === "a7670c/gps") { 
+            if(data.lat) updateChart(latChart, data.lat); 
+            if(data.lon) updateChart(lonChart, data.lon); 
+            if(data.speed) updateChart(speedChart, data.speed); 
+        }
+        if(topic === "a7670c/data") { 
+            if(data.temp) updateChart(tempChart, data.temp); 
+            if(data.voltage) updateChart(voltageChart, data.voltage); 
+        }
+    } catch(e) { 
+        console.error("Invalid data or parsing error:", e); 
+    }
 });
 </script>
 </body>
