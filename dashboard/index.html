@@ -10,9 +10,9 @@
     .container { max-width: 1200px; margin: auto; }
     .header { background: #1f1f1f; padding: 20px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #1a73e8; }
     #status { font-weight: bold; color: #ff9800; }
-    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 15px; }
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 15px; }
     .chart-card { background: #1f1f1f; padding: 15px; border-radius: 10px; border: 1px solid #333; }
-    #debug-log { background: #000; color: #00ff00; padding: 15px; height: 200px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; border-radius: 5px; margin-top: 20px; border: 1px solid #444; }
+    #debug-log { background: #000; color: #00ff00; padding: 15px; height: 180px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; border-radius: 5px; margin-top: 20px; border: 1px solid #444; }
     .log-entry { border-bottom: 1px solid #222; padding: 3px 0; }
     .err { color: #ff5252; }
   </style>
@@ -22,15 +22,14 @@
 <div class="container">
     <div class="header">
         <h1>A7670C IoT Telemetry</h1>
-        <p>Status: <span id="status">Connecting to Broker...</span></p>
+        <p>Status: <span id="status">Connecting...</span></p>
     </div>
 
     <div class="chart-grid">
         <div class="chart-card"><canvas id="latChart"></canvas></div>
         <div class="chart-card"><canvas id="lonChart"></canvas></div>
         <div class="chart-card"><canvas id="speedChart"></canvas></div>
-        <div class="chart-card"><canvas id="tempChart"></canvas></div>
-        <div class="chart-card"><canvas id="voltageChart"></canvas></div>
+        <div class="chart-card"><canvas id="batteryChart"></canvas></div>
     </div>
 
     <h3>System Output Log</h3>
@@ -38,17 +37,15 @@
 </div>
 
 <script>
-// --- UPDATED CONFIGURATION ---
-// Note: Ensure your EMQX Cloud has a WSS listener on 8084
-const brokerUrl = "ws://y17601f1.ala.dedicated.aws.emqxcloud.com:8883/";
+// --- CONFIGURATION ---
+const brokerUrl = "wss://y17601f1.ala.dedicated.aws.emqxcloud.com:8084/mqtt";
 const options = {
     username: "satyendrapawar", 
     password: "Satyendra@123",
     clientId: 'web_' + Math.random().toString(16).substring(2, 10),
     connectTimeout: 15000,
     keepalive: 60,
-    clean: true,
-    reconnectPeriod: 1000,
+    clean: true
 };
 
 const statusDiv = document.getElementById("status");
@@ -72,21 +69,22 @@ function initChart(id, label, unit, color) {
         data: { labels: [], datasets: [{ label: `${label} (${unit})`, data: [], borderColor: color, tension: 0.3, fill: false }] },
         options: {
             responsive: true,
-            scales: { y: { grid: { color: '#333' } }, x: { grid: { display: false } } },
+            scales: { 
+                y: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
+                x: { display: false } 
+            },
             plugins: { legend: { labels: { color: '#fff' } } }
         }
     });
 }
 
 const charts = {
-    lat: initChart('latChart', 'Lat', 'deg', '#4285f4'),
-    lon: initChart('lonChart', 'Lon', 'deg', '#34a853'),
+    lat: initChart('latChart', 'Latitude', 'deg', '#4285f4'),
+    lon: initChart('lonChart', 'Longitude', 'deg', '#34a853'),
     speed: initChart('speedChart', 'Speed', 'km/h', '#ea4335'),
-    temp: initChart('tempChart', 'Temp', '°C', '#fbbc05'),
-    volt: initChart('voltageChart', 'Voltage', 'V', '#a142f4')
+    bat: initChart('batteryChart', 'Battery', 'V', '#00e676') // Green color for battery
 };
 
-// --- EVENT HANDLERS ---
 client.on("connect", () => {
     log("CONNECTED to EMQX Cloud");
     statusDiv.innerText = "Online - Waiting for Data";
@@ -97,25 +95,27 @@ client.on("connect", () => {
 client.on("error", (err) => {
     log("MQTT Error: " + err.message, true);
     statusDiv.innerText = "Connection Failed";
-    statusDiv.style.color = "#ff5252";
 });
 
 client.on("message", (topic, message) => {
     const raw = message.toString();
-    log(`Topic: ${topic} | Data: ${raw}`);
+    log(`Topic: ${topic} | Msg: ${raw}`);
     
     try {
         const data = JSON.parse(raw);
+        
         if(topic === "a7670c/gps") {
             if(data.lat) updateChart(charts.lat, data.lat);
             if(data.lon) updateChart(charts.lon, data.lon);
             if(data.speed !== undefined) updateChart(charts.speed, data.speed);
-        } else {
-            if(data.temp) updateChart(charts.temp, data.temp);
-            if(data.volt || data.voltage) updateChart(charts.volt, data.volt || data.voltage);
+        } 
+        else if(topic === "a7670c/data") {
+            // Check for common battery keys: vbat, battery, or volt
+            const batteryVal = data.vbat || data.battery || data.volt || data.voltage;
+            if(batteryVal !== undefined) updateChart(charts.bat, batteryVal);
         }
     } catch(e) {
-        log("JSON Parse Error: Check if hardware sends valid JSON format.", true);
+        log("JSON Parse Error. Ensure hardware sends valid JSON.", true);
     }
 });
 
@@ -123,11 +123,11 @@ function updateChart(chart, val) {
     const time = new Date().toLocaleTimeString();
     chart.data.labels.push(time);
     chart.data.datasets[0].data.push(val);
-    if(chart.data.labels.length > 20) {
+    if(chart.data.labels.length > 15) {
         chart.data.labels.shift();
         chart.data.datasets[0].data.shift();
     }
-    chart.update();
+    chart.update('none'); 
 }
 </script>
 </body>
