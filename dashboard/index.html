@@ -2,151 +2,132 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>A7670C Live Dashboard - Enhanced</title>
+  <title>A7670C Live Dashboard</title>
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; background-color: #f0f2f5; margin: 0; padding: 20px; }
-    .container { max-width: 1100px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-    h1 { color: #1a73e8; margin-bottom: 5px; }
-    #status { font-size: 1.1em; font-weight: bold; margin-bottom: 20px; color: #d93025; transition: all 0.3s; }
-    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
-    canvas { background: #fff; border: 1px solid #eee; border-radius: 8px; padding: 10px; }
-    .log-container { margin-top: 30px; text-align: left; }
-    #debug-log { background: #202124; color: #34a853; padding: 15px; height: 250px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 8px; border: 1px solid #3c4043; }
-    .log-entry { border-bottom: 1px solid #3c4043; padding: 4px 0; word-break: break-all; }
-    .error-log { color: #ea4335; }
-    .data-log { color: #fbbc05; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; }
+    .container { max-width: 1200px; margin: auto; }
+    .header { background: #1f1f1f; padding: 20px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #1a73e8; }
+    #status { font-weight: bold; color: #ff9800; }
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 15px; }
+    .chart-card { background: #1f1f1f; padding: 15px; border-radius: 10px; border: 1px solid #333; }
+    #debug-log { background: #000; color: #00ff00; padding: 15px; height: 200px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; border-radius: 5px; margin-top: 20px; border: 1px solid #444; }
+    .log-entry { border-bottom: 1px solid #222; padding: 3px 0; }
+    .err { color: #ff5252; }
   </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>A7670C Real-Time Monitor</h1>
-    <div id="status">Initializing Connection...</div>
+    <div class="header">
+        <h1>A7670C IoT Telemetry</h1>
+        <p>Status: <span id="status">Connecting to Broker...</span></p>
+    </div>
 
     <div class="chart-grid">
-        <canvas id="latChart"></canvas>
-        <canvas id="lonChart"></canvas>
-        <canvas id="speedChart"></canvas>
-        <canvas id="tempChart"></canvas>
-        <canvas id="voltageChart"></canvas>
+        <div class="chart-card"><canvas id="latChart"></canvas></div>
+        <div class="chart-card"><canvas id="lonChart"></canvas></div>
+        <div class="chart-card"><canvas id="speedChart"></canvas></div>
+        <div class="chart-card"><canvas id="tempChart"></canvas></div>
+        <div class="chart-card"><canvas id="voltageChart"></canvas></div>
     </div>
 
-    <div class="log-container">
-        <div style="display:flex; justify-content: space-between; align-items: center;">
-            <h3>System Debug & Raw Data Feed</h3>
-            <button onclick="document.getElementById('debug-log').innerHTML=''" style="height:25px; cursor:pointer;">Clear Log</button>
-        </div>
-        <div id="debug-log"></div>
-    </div>
+    <h3>System Output Log</h3>
+    <div id="debug-log"></div>
 </div>
 
 <script>
-// --- CONFIGURATION ---
-const brokerUrl = "https://y17601f1.ala.dedicated.aws.emqxcloud.com:8883/mqtt";
+// --- UPDATED CONFIGURATION ---
+// Note: Ensure your EMQX Cloud has a WSS listener on 8084
+const brokerUrl = "wss://y17601f1.ala.dedicated.aws.emqxcloud.com:8084/mqtt";
 const options = {
     username: "satyendrapawar", 
     password: "Satyendra@123",
+    clientId: 'web_' + Math.random().toString(16).substring(2, 10),
+    connectTimeout: 15000,
     keepalive: 60,
-    clientId: 'web_client_' + Math.random().toString(16).substring(2, 10),
-    connectTimeout: 10000,
-    clean: true
+    clean: true,
+    reconnectPeriod: 1000,
 };
 
-const debugLog = document.getElementById("debug-log");
 const statusDiv = document.getElementById("status");
+const debugLog = document.getElementById("debug-log");
 
-function log(msg, type = "") {
+function log(msg, isError = false) {
     const entry = document.createElement("div");
-    entry.className = "log-entry " + type;
+    entry.className = isError ? "log-entry err" : "log-entry";
     entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
     debugLog.prepend(entry);
-    console.log(msg);
 }
 
-log("Attempting to connect to EMQX Cloud...");
+log("Connecting to: " + brokerUrl);
 const client = mqtt.connect(brokerUrl, options);
 
-// --- CHART SETUP ---
-function createChart(label, color, id, unit) {
+// --- CHART INITIALIZATION ---
+function initChart(id, label, unit, color) {
     const ctx = document.getElementById(id).getContext('2d');
     return new Chart(ctx, {
         type: 'line',
-        data: { labels: [], datasets: [{ label: `${label} (${unit})`, data: [], borderColor: color, backgroundColor: color + '22', fill: true, tension: 0.3 }] },
-        options: { 
+        data: { labels: [], datasets: [{ label: `${label} (${unit})`, data: [], borderColor: color, tension: 0.3, fill: false }] },
+        options: {
             responsive: true,
-            scales: { x: { display: true, title: { display: true, text: 'Time' } }, y: { beginAtZero: false } },
-            animation: { duration: 400 } 
+            scales: { y: { grid: { color: '#333' } }, x: { grid: { display: false } } },
+            plugins: { legend: { labels: { color: '#fff' } } }
         }
     });
 }
 
 const charts = {
-    lat: createChart('Latitude', '#4285f4', 'latChart', 'deg'),
-    lon: createChart('Longitude', '#34a853', 'lonChart', 'deg'),
-    speed: createChart('Speed', '#ea4335', 'speedChart', 'km/h'),
-    temp: createChart('Temperature', '#fbbc05', 'tempChart', '°C'),
-    volt: createChart('Voltage', '#a142f4', 'voltageChart', 'V')
+    lat: initChart('latChart', 'Lat', 'deg', '#4285f4'),
+    lon: initChart('lonChart', 'Lon', 'deg', '#34a853'),
+    speed: initChart('speedChart', 'Speed', 'km/h', '#ea4335'),
+    temp: initChart('tempChart', 'Temp', '°C', '#fbbc05'),
+    volt: initChart('voltageChart', 'Voltage', 'V', '#a142f4')
 };
 
-// --- MQTT LOGIC ---
+// --- EVENT HANDLERS ---
 client.on("connect", () => {
-    log("SUCCESS: Connected to Broker.", "data-log");
-    statusDiv.innerText = "Connected: Waiting for A7670C data...";
-    statusDiv.style.color = "#188038";
-    
-    // Subscribe to topics
-    client.subscribe(["a7670c/data", "a7670c/gps"], (err) => {
-        if (!err) log("Subscribed to a7670c/data and a7670c/gps");
-    });
+    log("CONNECTED to EMQX Cloud");
+    statusDiv.innerText = "Online - Waiting for Data";
+    statusDiv.style.color = "#4caf50";
+    client.subscribe(["a7670c/data", "a7670c/gps"]);
 });
 
 client.on("error", (err) => {
-    log("MQTT ERROR: " + err.message, "error-log");
-    statusDiv.innerText = "Connection Error. Check credentials.";
-    statusDiv.style.color = "#d93025";
+    log("MQTT Error: " + err.message, true);
+    statusDiv.innerText = "Connection Failed";
+    statusDiv.style.color = "#ff5252";
 });
 
 client.on("message", (topic, message) => {
-    const payload = message.toString();
-    log(`Received Topic [${topic}]: ${payload}`, "data-log");
+    const raw = message.toString();
+    log(`Topic: ${topic} | Data: ${raw}`);
     
     try {
-        const data = JSON.parse(payload);
-        statusDiv.innerText = "Receiving Live Data...";
-        statusDiv.style.color = "#1a73e8";
-
+        const data = JSON.parse(raw);
         if(topic === "a7670c/gps") {
-            if (data.lat !== undefined || data.latitude !== undefined) 
-                updateChart(charts.lat, data.lat || data.latitude);
-            if (data.lon !== undefined || data.longitude !== undefined) 
-                updateChart(charts.lon, data.lon || data.longitude);
-            if (data.speed !== undefined) 
-                updateChart(charts.speed, data.speed);
-        } 
-        else if(topic === "a7670c/data") {
-            if (data.temp !== undefined || data.temperature !== undefined) 
-                updateChart(charts.temp, data.temp || data.temperature);
-            if (data.voltage !== undefined || data.volt !== undefined) 
-                updateChart(charts.volt, data.voltage || data.volt);
+            if(data.lat) updateChart(charts.lat, data.lat);
+            if(data.lon) updateChart(charts.lon, data.lon);
+            if(data.speed !== undefined) updateChart(charts.speed, data.speed);
+        } else {
+            if(data.temp) updateChart(charts.temp, data.temp);
+            if(data.volt || data.voltage) updateChart(charts.volt, data.volt || data.voltage);
         }
     } catch(e) {
-        log("PARSE ERROR: Message is not valid JSON. Payload: " + payload, "error-log");
+        log("JSON Parse Error: Check if hardware sends valid JSON format.", true);
     }
 });
 
-function updateChart(chart, value) {
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function updateChart(chart, val) {
+    const time = new Date().toLocaleTimeString();
     chart.data.labels.push(time);
-    chart.data.datasets[0].data.push(value);
-    
-    // Keep only last 15 points to prevent lag
-    if(chart.data.labels.length > 15) {
+    chart.data.datasets[0].data.push(val);
+    if(chart.data.labels.length > 20) {
         chart.data.labels.shift();
         chart.data.datasets[0].data.shift();
     }
-    chart.update('none'); // Update without full animation for performance
+    chart.update();
 }
 </script>
 </body>
