@@ -1,105 +1,137 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
   <title>A7670C Live Dashboard</title>
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: Arial; text-align: center; margin-top: 20px; }
-    canvas { max-width: 90%; margin: 30px auto; }
-    h1 { margin-bottom: 10px; }
-    #status { color: red; font-weight: bold; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #f4f7f6; padding: 20px; }
+    .container { max-width: 1000px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    canvas { max-width: 100%; margin: 20px 0; border-bottom: 1px solid #eee; }
+    #status { color: #d9534f; font-weight: bold; font-size: 1.2em; margin: 10px 0; }
+    #debug-log { text-align: left; background: #222; color: #0f0; padding: 10px; height: 150px; overflow-y: scroll; font-family: monospace; font-size: 12px; border-radius: 5px; margin-top: 20px; }
+    .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 768px) { .chart-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
 
-<h1>A7670C Live GPS & Sensor Dashboard</h1>
-<div id="status">Connecting to broker...</div>
+<div class="container">
+    <h1>A7670C Live GPS & Sensor Dashboard</h1>
+    <div id="status">Initializing...</div>
 
-<canvas id="latChart"></canvas>
-<canvas id="lonChart"></canvas>
-<canvas id="speedChart"></canvas>
-<canvas id="tempChart"></canvas>
-<canvas id="voltageChart"></canvas>
+    <div class="chart-grid">
+        <canvas id="latChart"></canvas>
+        <canvas id="lonChart"></canvas>
+        <canvas id="speedChart"></canvas>
+        <canvas id="tempChart"></canvas>
+        <canvas id="voltageChart"></canvas>
+    </div>
+
+    <h3>Raw Debug Log</h3>
+    <div id="debug-log"></div>
+</div>
 
 <script>
-const client = mqtt.connect("wss://y17601f1.ala.dedicated.aws.emqxcloud.com:8084" {  // Confirm port in EMQX dashboard
-    username: "satyendrapawar"  // Replace with your EMQX Cloud username
-    password: "Satyendra@123"   // Replace with your EMQX Cloud password
-});
+// --- CONFIGURATION ---
+// Note: Added /mqtt path and fixed syntax commas
+const brokerUrl = "wss://y17601f1.ala.dedicated.aws.emqxcloud.com:8084/mqtt";
+const options = {
+    username: "satyendrapawar", 
+    password: "Satyendra@123",
+    clean: true,
+    connectTimeout: 4000
+};
+
+const debugLog = document.getElementById("debug-log");
+function log(msg) {
+    const entry = document.createElement("div");
+    entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    debugLog.prepend(entry);
+}
+
+log("Attempting to connect to: " + brokerUrl);
+const client = mqtt.connect(brokerUrl, options);
 
 let dataReceived = false;
 
-client.on("connect", () => {
-    console.log("Connected to MQTT broker");
-    document.getElementById("status").innerText = "Connected - Waiting for data...";
-    client.subscribe("a7670c/data", { qos: 1 });
-    client.subscribe("a7670c/gps", { qos: 1 });
-});
-
-client.on("error", (error) => {
-    console.error("Connection error:", error);
-    document.getElementById("status").innerText = "Connection failed: " + error.message;
-});
-
-client.on("offline", () => {
-    console.log("Disconnected from broker");
-    document.getElementById("status").innerText = "Disconnected - Retrying...";
-    client.reconnect();
-});
-
+// --- CHART INITIALIZATION ---
 function createChart(label, color, id) {
     const ctx = document.getElementById(id).getContext('2d');
-    console.log(`Creating chart for ${label} with ID ${id}`);
     return new Chart(ctx, {
         type: 'line',
-        data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false }] },
-        options: { responsive: true, animation: false, scales: { x: { title: { display: true, text: 'Time' } }, y: { title: { display: true, text: label } } } }
+        data: { labels: [], datasets: [{ label, data: [], borderColor: color, backgroundColor: color + '22', fill: true, tension: 0.3 }] },
+        options: { 
+            responsive: true, 
+            maintainAspectRatio: true,
+            scales: { y: { beginAtZero: false } } 
+        }
     });
 }
 
-const latChart = createChart('Latitude', 'blue', 'latChart');
-const lonChart = createChart('Longitude', 'green', 'lonChart');
-const speedChart = createChart('Speed', 'red', 'speedChart');
-const tempChart = createChart('Temperature', 'orange', 'tempChart');
-const voltageChart = createChart('Voltage', 'purple', 'voltageChart');
+const charts = {
+    lat: createChart('Latitude', '#007bff', 'latChart'),
+    lon: createChart('Longitude', '#28a745', 'lonChart'),
+    speed: createChart('Speed (km/h)', '#dc3545', 'speedChart'),
+    temp: createChart('Temperature (°C)', '#fd7e14', 'tempChart'),
+    volt: createChart('Voltage (V)', '#6f42c1', 'voltageChart')
+};
 
-function updateChart(chart, value) {
-    dataReceived = true;
+// --- MQTT EVENTS ---
+client.on("connect", () => {
+    log("Connected to MQTT broker successfully!");
+    document.getElementById("status").innerText = "Connected - Waiting for data...";
+    document.getElementById("status").style.color = "green";
+    client.subscribe(["a7670c/data", "a7670c/gps"], { qos: 1 });
+});
+
+client.on("error", (error) => {
+    log("Connection error: " + error.message);
+    document.getElementById("status").innerText = "Connection failed!";
+});
+
+client.on("message", (topic, message) => {
+    const rawPayload = message.toString();
+    log(`Topic: ${topic} | Data: ${rawPayload}`);
+    
+    try {
+        const data = JSON.parse(rawPayload);
+        dataReceived = true;
+        document.getElementById("status").innerText = "Receiving Live Data";
+
+        if(topic === "a7670c/gps") {
+            if(data.lat || data.latitude) updateChartData(charts.lat, data.lat || data.latitude);
+            if(data.lon || data.longitude) updateChartData(charts.lon, data.lon || data.longitude);
+            if(data.speed !== undefined) updateChartData(charts.speed, parseFloat(data.speed));
+        } 
+        else if(topic === "a7670c/data") {
+            if(data.temp || data.temperature) updateChartData(charts.temp, data.temp || data.temperature);
+            if(data.voltage !== undefined) updateChartData(charts.volt, data.voltage);
+        }
+    } catch(e) {
+        log("JSON Parse Error: " + e.message);
+    }
+});
+
+function updateChartData(chart, value) {
     const time = new Date().toLocaleTimeString();
     chart.data.labels.push(time);
     chart.data.datasets[0].data.push(value);
-    if(chart.data.labels.length > 20) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
-    chart.update();
-    console.log(`Updated chart with value: ${value} at ${time}`);
-    document.getElementById("status").innerText = "Data received and visualized!";
+    if(chart.data.labels.length > 15) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+    }
+    chart.update('none'); // Update without animation for performance
 }
 
-// Check for data after 10 seconds
+// Timeout warning
 setTimeout(() => {
     if (!dataReceived) {
-        document.getElementById("status").innerText = "No data received yet. Check broker, topics, or device.";
+        log("Warning: No data received after 15 seconds.");
     }
-}, 10000);
-
-client.on("message", (topic, message) => {
-    console.log("Received message on topic:", topic, "Raw message:", message.toString());
-    try {
-        const data = JSON.parse(message.toString());
-        console.log("Parsed data keys:", Object.keys(data));  // Debug: See what fields are in the JSON
-        if(topic === "a7670c/gps") { 
-            if(data.lat !== undefined || data.latitude !== undefined) updateChart(latChart, data.lat || data.latitude); 
-            if(data.lon !== undefined || data.longitude !== undefined) updateChart(lonChart, data.lon || data.longitude); 
-            if(data.speed !== undefined) updateChart(speedChart, parseFloat(data.speed));  // Ensure number
-        }
-        if(topic === "a7670c/data") { 
-            if(data.temp !== undefined || data.temperature !== undefined) updateChart(tempChart, data.temp || data.temperature); 
-            if(data.voltage !== undefined) updateChart(voltageChart, data.voltage); 
-        }
-    } catch(e) { 
-        console.error("Invalid data or parsing error:", e); 
-    }
-});
+}, 15000);
 </script>
+
 </body>
 </html>
