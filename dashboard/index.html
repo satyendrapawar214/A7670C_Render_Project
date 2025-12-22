@@ -2,25 +2,28 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>A7670C Live Dashboard</title>
+  <title>A7670C Live Dashboard - Enhanced</title>
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; background-color: #f0f2f5; margin: 0; padding: 20px; }
     .container { max-width: 1100px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
     h1 { color: #1a73e8; margin-bottom: 5px; }
-    #status { font-size: 1.1em; font-weight: bold; margin-bottom: 20px; color: #d93025; }
+    #status { font-size: 1.1em; font-weight: bold; margin-bottom: 20px; color: #d93025; transition: all 0.3s; }
     .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
     canvas { background: #fff; border: 1px solid #eee; border-radius: 8px; padding: 10px; }
-    #debug-log { text-align: left; background: #202124; color: #34a853; padding: 15px; height: 180px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 8px; margin-top: 25px; border: 1px solid #3c4043; }
-    .log-entry { border-bottom: 1px solid #3c4043; padding: 2px 0; }
+    .log-container { margin-top: 30px; text-align: left; }
+    #debug-log { background: #202124; color: #34a853; padding: 15px; height: 250px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 8px; border: 1px solid #3c4043; }
+    .log-entry { border-bottom: 1px solid #3c4043; padding: 4px 0; word-break: break-all; }
+    .error-log { color: #ea4335; }
+    .data-log { color: #fbbc05; }
   </style>
 </head>
 <body>
 
 <div class="container">
     <h1>A7670C Real-Time Monitor</h1>
-    <div id="status">Checking connection...</div>
+    <div id="status">Initializing Connection...</div>
 
     <div class="chart-grid">
         <canvas id="latChart"></canvas>
@@ -30,13 +33,17 @@
         <canvas id="voltageChart"></canvas>
     </div>
 
-    <h3 style="text-align: left; margin-top: 30px;">System Debug Log</h3>
-    <div id="debug-log"></div>
+    <div class="log-container">
+        <div style="display:flex; justify-content: space-between; align-items: center;">
+            <h3>System Debug & Raw Data Feed</h3>
+            <button onclick="document.getElementById('debug-log').innerHTML=''" style="height:25px; cursor:pointer;">Clear Log</button>
+        </div>
+        <div id="debug-log"></div>
+    </div>
 </div>
 
 <script>
 // --- CONFIGURATION ---
-// Port 8084 is for WSS (WebSockets). Port 1883 will NOT work in a browser.
 const brokerUrl = "wss://y17601f1.ala.dedicated.aws.emqxcloud.com:8084/mqtt";
 const options = {
     username: "satyendrapawar", 
@@ -50,14 +57,15 @@ const options = {
 const debugLog = document.getElementById("debug-log");
 const statusDiv = document.getElementById("status");
 
-function log(msg) {
+function log(msg, type = "") {
     const entry = document.createElement("div");
-    entry.className = "log-entry";
+    entry.className = "log-entry " + type;
     entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
     debugLog.prepend(entry);
+    console.log(msg);
 }
 
-log("Connecting to " + brokerUrl + "...");
+log("Attempting to connect to EMQX Cloud...");
 const client = mqtt.connect(brokerUrl, options);
 
 // --- CHART SETUP ---
@@ -65,11 +73,11 @@ function createChart(label, color, id, unit) {
     const ctx = document.getElementById(id).getContext('2d');
     return new Chart(ctx, {
         type: 'line',
-        data: { labels: [], datasets: [{ label: `${label} (${unit})`, data: [], borderColor: color, backgroundColor: color + '11', fill: true, tension: 0.2 }] },
+        data: { labels: [], datasets: [{ label: `${label} (${unit})`, data: [], borderColor: color, backgroundColor: color + '22', fill: true, tension: 0.3 }] },
         options: { 
             responsive: true,
-            scales: { x: { display: true }, y: { beginAtZero: false } },
-            animation: { duration: 0 } // Fast updates
+            scales: { x: { display: true, title: { display: true, text: 'Time' } }, y: { beginAtZero: false } },
+            animation: { duration: 400 } 
         }
     });
 }
@@ -84,54 +92,61 @@ const charts = {
 
 // --- MQTT LOGIC ---
 client.on("connect", () => {
-    log("CONNECTED successfully to EMQX Cloud.");
+    log("SUCCESS: Connected to Broker.", "data-log");
     statusDiv.innerText = "Connected: Waiting for A7670C data...";
     statusDiv.style.color = "#188038";
-    client.subscribe(["a7670c/data", "a7670c/gps"], { qos: 1 });
+    
+    // Subscribe to topics
+    client.subscribe(["a7670c/data", "a7670c/gps"], (err) => {
+        if (!err) log("Subscribed to a7670c/data and a7670c/gps");
+    });
 });
 
 client.on("error", (err) => {
-    log("CONNECTION ERROR: " + err.message);
-    statusDiv.innerText = "Connection Error. Check credentials/port.";
+    log("MQTT ERROR: " + err.message, "error-log");
+    statusDiv.innerText = "Connection Error. Check credentials.";
     statusDiv.style.color = "#d93025";
-});
-
-client.on("offline", () => {
-    log("Client went OFFLINE.");
-    statusDiv.innerText = "Offline - Reconnecting...";
 });
 
 client.on("message", (topic, message) => {
     const payload = message.toString();
-    log(`Topic: ${topic} | Msg: ${payload}`);
+    log(`Received Topic [${topic}]: ${payload}`, "data-log");
     
     try {
         const data = JSON.parse(payload);
-        statusDiv.innerText = "Receiving Live Stream...";
+        statusDiv.innerText = "Receiving Live Data...";
+        statusDiv.style.color = "#1a73e8";
 
         if(topic === "a7670c/gps") {
-            if(data.lat || data.latitude) updateChart(charts.lat, data.lat || data.latitude);
-            if(data.lon || data.longitude) updateChart(charts.lon, data.lon || data.longitude);
-            if(data.speed !== undefined) updateChart(charts.speed, data.speed);
+            if (data.lat !== undefined || data.latitude !== undefined) 
+                updateChart(charts.lat, data.lat || data.latitude);
+            if (data.lon !== undefined || data.longitude !== undefined) 
+                updateChart(charts.lon, data.lon || data.longitude);
+            if (data.speed !== undefined) 
+                updateChart(charts.speed, data.speed);
         } 
         else if(topic === "a7670c/data") {
-            if(data.temp || data.temperature) updateChart(charts.temp, data.temp || data.temperature);
-            if(data.voltage !== undefined) updateChart(charts.volt, data.voltage);
+            if (data.temp !== undefined || data.temperature !== undefined) 
+                updateChart(charts.temp, data.temp || data.temperature);
+            if (data.voltage !== undefined || data.volt !== undefined) 
+                updateChart(charts.volt, data.voltage || data.volt);
         }
     } catch(e) {
-        log("Data Parse Error: Make sure hardware sends valid JSON.");
+        log("PARSE ERROR: Message is not valid JSON. Payload: " + payload, "error-log");
     }
 });
 
 function updateChart(chart, value) {
-    const time = new Date().toLocaleTimeString();
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     chart.data.labels.push(time);
     chart.data.datasets[0].data.push(value);
-    if(chart.data.labels.length > 20) {
+    
+    // Keep only last 15 points to prevent lag
+    if(chart.data.labels.length > 15) {
         chart.data.labels.shift();
         chart.data.datasets[0].data.shift();
     }
-    chart.update();
+    chart.update('none'); // Update without full animation for performance
 }
 </script>
 </body>
