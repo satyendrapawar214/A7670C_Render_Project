@@ -1,54 +1,7 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>A7670C ThingSpeak Dashboard</title>
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body { font-family: 'Segoe UI', sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; }
-    .container { max-width: 1200px; margin: auto; }
-    .header { background: #1f1f1f; padding: 20px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #34a853; }
-    #status { font-weight: bold; color: #ff9800; }
-    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 15px; }
-    .chart-card { background: #1f1f1f; padding: 15px; border-radius: 10px; border: 1px solid #333; }
-    #debug-log { background: #000; color: #00ff00; padding: 15px; height: 180px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; border-radius: 5px; margin-top: 20px; border: 1px solid #444; }
-    .log-entry { border-bottom: 1px solid #222; padding: 3px 0; }
-  </style>
-</head>
-<body>
-
-<div class="container">
-    <div class="header">
-        <h1>A7670C ThingSpeak Monitor</h1>
-        <p>Status: <span id="status">Connecting to ThingSpeak...</span></p>
-    </div>
-
-    <div class="chart-grid">
-        <div class="chart-card"><canvas id="latChart"></canvas></div>
-        <div class="chart-card"><canvas id="lonChart"></canvas></div>
-        <div class="chart-card"><canvas id="speedChart"></canvas></div>
-        <div class="chart-card"><canvas id="batteryChart"></canvas></div>
-    </div>
-
-    <h3>ThingSpeak MQTT Log</h3>
-    <div id="debug-log"></div>
-</div>
-
 <script>
-// --- THINGSPEAK CONFIGURATION ---
-const CHANNEL_ID = "YOUR_CHANNEL_ID"; // Replace with your Channel ID
-const MQTT_API_KEY = "YOUR_MQTT_API_KEY"; // Replace with your MQTT API Key
-
-// ThingSpeak uses WebSockets on Port 443 (standard HTTPS port)
-const brokerUrl = "wss://mqtt3.thingspeak.com:443/mqtt"; 
-
-const options = {
-    username: "ANY_STRING", // Usually doesn't matter for ThingSpeak MQTT
-    password: MQTT_API_KEY,
-    clientId: "YOUR_CLIENT_ID", // MUST match the Client ID generated in ThingSpeak
-    clean: true
-};
+// --- THINGSPEAK HTTP CONFIGURATION ---
+const CHANNEL_ID = "3197097"; 
+const READ_API_KEY = "YOUR_READ_API_KEY"; // Get this from ThingSpeak 'API Keys' tab
 
 const statusDiv = document.getElementById("status");
 const debugLog = document.getElementById("debug-log");
@@ -59,8 +12,6 @@ function log(msg) {
     entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
     debugLog.prepend(entry);
 }
-
-const client = mqtt.connect(brokerUrl, options);
 
 // --- CHART INITIALIZATION ---
 function initChart(id, label, unit, color) {
@@ -79,41 +30,52 @@ const charts = {
     bat: initChart('batteryChart', 'Battery', 'V', '#00e676')
 };
 
-client.on("connect", () => {
-    log("CONNECTED to ThingSpeak!");
-    statusDiv.innerText = "Online";
-    statusDiv.style.color = "#4caf50";
-    // ThingSpeak subscribe topic format
-    client.subscribe(`channels/${CHANNEL_ID}/subscribe`);
-});
+// --- HTTP FETCH LOGIC ---
+async function fetchData() {
+    // API URL to get the last 1 entry from your channel
+    const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?api_key=${READ_API_KEY}&results=1`;
 
-client.on("message", (topic, message) => {
-    const raw = message.toString();
-    log(`Data Received: ${raw}`);
-    
-    // ThingSpeak usually sends data as: field1=18.5&field2=73.2...
-    // But if you send JSON, we parse it here:
     try {
-        const urlParams = new URLSearchParams(raw);
-        if (urlParams.has('field1')) updateChart(charts.lat, urlParams.get('field1'));
-        if (urlParams.has('field2')) updateChart(charts.lon, urlParams.get('field2'));
-        if (urlParams.has('field3')) updateChart(charts.speed, urlParams.get('field3'));
-        if (urlParams.has('field4')) updateChart(charts.bat, urlParams.get('field4'));
-    } catch(e) {
-        log("Parse Error: Ensure data is sent as field1=val&field2=val");
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.feeds && data.feeds.length > 0) {
+            const lastEntry = data.feeds[0];
+            statusDiv.innerText = "Online: Syncing Data";
+            statusDiv.style.color = "#4caf50";
+
+            log(`Data Received: F1:${lastEntry.field1}, F2:${lastEntry.field2}`);
+
+            // Update charts if data exists in fields
+            if (lastEntry.field1 !== null) updateChart(charts.lat, lastEntry.field1);
+            if (lastEntry.field2 !== null) updateChart(charts.lon, lastEntry.field2);
+            if (lastEntry.field3 !== null) updateChart(charts.speed, lastEntry.field3);
+            if (lastEntry.field4 !== null) updateChart(charts.bat, lastEntry.field4);
+        }
+    } catch (error) {
+        log("HTTP Fetch Error: Check your Read API Key or Network.");
+        statusDiv.innerText = "Fetch Error";
+        statusDiv.style.color = "#ff5252";
     }
-});
+}
 
 function updateChart(chart, val) {
     const time = new Date().toLocaleTimeString();
+    // Don't add duplicate data if it hasn't changed (optional)
+    if (chart.data.datasets[0].data.slice(-1)[0] === val) return; 
+
     chart.data.labels.push(time);
     chart.data.datasets[0].data.push(val);
     if(chart.data.labels.length > 15) {
         chart.data.labels.shift();
         chart.data.datasets[0].data.shift();
     }
-    chart.update('none');
+    chart.update();
 }
+
+// Start polling every 15 seconds (ThingSpeak free tier limit)
+log("Starting HTTP Polling...");
+fetchData(); 
+setInterval(fetchData, 15000); 
+
 </script>
-</body>
-</html>
